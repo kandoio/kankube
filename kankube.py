@@ -1,6 +1,5 @@
-#!/usr/bin/env python3
-
 import argparse
+import copy
 import logging
 import os
 
@@ -19,8 +18,34 @@ OBJECTS = {
     'Service': pykube.Service
 }
 
-API = None
+BASIC_CONFIG = {
+    "clusters": [
+        {
+            "name": "self",
+            "cluster": {
+                "server": None,
+            },
+        },
+    ],
+    "users": [
+        {
+            "name": "self",
+            "user": {},
+        },
+    ],
+    "contexts": [
+        {
+            "name": "self",
+            "context": {
+                "cluster": "self",
+                "user": "self",
+            },
+        }
+    ],
+    "current-context": "self",
+}
 
+API = None
 logger = logging.getLogger('kankube')
 
 
@@ -152,6 +177,11 @@ def main():
 
     parser.add_argument('--namespace')
 
+    parser.add_argument('--host', default=os.environ.get('KUBERNETES_HOST'))
+    parser.add_argument('--token', default=os.environ.get('KUBERNETES_TOKEN'))
+    parser.add_argument('--username', default=os.environ.get('KUBERNETES_USERNAME'))
+    parser.add_argument('--password', default=os.environ.get('KUBERNETES_PASSWORD'))
+
     create_parser = subparsers.add_parser('create')
     create_parser.add_argument('filenames', nargs='+')
 
@@ -163,8 +193,23 @@ def main():
 
     args = parser.parse_args()
 
+    config = None
+    if args.host or args.username or args.password or args.token:
+        obj = copy.deepcopy(BASIC_CONFIG)
+        obj['clusters'][0]['cluster']['server'] = args.host
+        obj['users'][0]['user'] = {
+            'username': args.username,
+            'password': args.password,
+            'token': args.token
+        }
+        config = pykube.KubeConfig(obj)
+    elif os.path.isfile(os.path.expanduser("~/.kube/config")):
+        config = pykube.KubeConfig.from_file(os.path.expanduser("~/.kube/config"))
+    else:
+        parser.error('You must provide a host, username/password, token, or have a ~/.kube/config file')
+
     global API
-    API = pykube.HTTPClient(pykube.KubeConfig.from_file(os.path.expanduser("~/.kube/config")))
+    API = pykube.HTTPClient(config)
 
     if args.subparser_name == 'create':
         for filename in args.filenames:
