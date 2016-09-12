@@ -25,12 +25,12 @@ setup(
     author="Kando Limited",
     author_email='admin@kando.io',
     url='https://github.com/kandoio/kankube',
-    packages=[
-        'kankube',
-    ],
-    package_dir={'kankube':
-                 'kankube'},
-    include_package_data=True,
+    py_modules=['kankube'],
+    entry_points={
+        'console_scripts': [
+            'kankube = kankube:main'
+        ]
+    },
     install_requires=requirements,
     license="BSD license",
     zip_safe=False,
