@@ -1,0 +1,1 @@
+-e git+https://github.com/kbrownlees/pykube.git@default_namespace#egg=pykube
