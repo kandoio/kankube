@@ -50,6 +50,10 @@ BASIC_CONFIG = {
 logger = logging.getLogger('kankube')
 
 
+def _get_log_name(entry):
+    return '{} ({}) in {}'.format(entry.name, entry.kind, entry.namespace)
+
+
 def get_config(directory=None):
     if directory is None:
         directory = os.getcwd()
@@ -138,22 +142,20 @@ def get(entries=None):
     for entry in entries:
         entry.reload()
         # json.dumps is the best way to pretty print a dict, pprint is rubbish.
-        logger.info('{} ({}) in {}\n{}'.format(
-            entry.name, entry.kind, entry.namespace, json.dumps(entry.obj, indent=4))
-        )
+        logger.info('{}\n{}'.format(_get_log_name(entry), json.dumps(entry.obj, indent=4)))
 
 
 def create(entries=None):
     for entry in entries:
         if not entry.exists():
-            logger.info('Creating {} ({}) in {}'.format(entry.name, entry.kind, entry.namespace))
+            logger.info('Creating {}'.format(_get_log_name(entry)))
             entry.create()
 
 
 def apply(entries=None):
     for entry in entries:
         if entry.exists():
-            logger.info('Applying {} ({}) in {}'.format(entry.name, entry.kind, entry.namespace))
+            logger.info('Applying {}'.format(_get_log_name(entry)))
             entry.update()
         else:
             create(entries=[entry])
@@ -162,23 +164,59 @@ def apply(entries=None):
 def delete(entries=None):
     for entry in entries:
         if entry.exists():
-            logger.info('Deleting {} ({}) in {}'.format(entry.name, entry.kind, entry.namespace))
+            logger.info('Deleting {}'.format(_get_log_name(entry)))
             entry.delete()
 
 
 def status(entries=None):
     """ Check the status of entries
-    "status": {
-        "availableReplicas": 1,
-        "observedGeneration": 4,
-        "unavailableReplicas": 2,
-        "replicas": 3,
-        "updatedReplicas": 2
-    }
+
+    Deployment example:
+        "status": {
+            "availableReplicas": 1,
+            "observedGeneration": 4,
+            "unavailableReplicas": 2,
+            "replicas": 3,
+            "updatedReplicas": 2
+        }
 
     :return:
     """
-    return
+    exit_code = 0
+
+    for entry in entries:
+        entry.reload()
+        if entry.kind.lower() == 'deployment':
+            entry_status = entry.obj.get('status')
+            if not entry_status:
+                exit_code = 1
+                logger.error('{} did not have a status'.format(_get_log_name(entry)))
+
+            total = entry_status['replicas']
+            available = entry_status['availableReplicas']
+            unavailable = entry_status.get('unavailableReplicas', 0)
+            updated = entry_status['updatedReplicas']
+            observed_generation = entry_status['observedGeneration']
+            latest_generation = entry.obj.get('metadata', {}).get('generation')
+
+            logger.info('{}: {} total, {} available, {} unavailable, {} updated at generation {} ({})'.format(
+                _get_log_name(entry), total, available, unavailable, updated, observed_generation,
+                latest_generation
+            ))
+
+            if observed_generation == latest_generation and \
+                    total == available and \
+                    total == updated and \
+                    unavailable == 0:
+                # All is well in the world
+                pass
+            else:
+                exit_code = 1
+        else:
+            exit_code = 1
+            logger.warning('Unable to get status for {}'.format(_get_log_name(entry)))
+
+    return exit_code
 
 
 def main():
@@ -214,6 +252,10 @@ def main():
     delete_parser = subparsers.add_parser('delete')
     delete_parser.add_argument('filenames', nargs='+')
     delete_parser.set_defaults(func=delete)
+
+    delete_parser = subparsers.add_parser('status')
+    delete_parser.add_argument('filenames', nargs='+')
+    delete_parser.set_defaults(func=status)
 
     args = parser.parse_args()
     if not args.func:
