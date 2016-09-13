@@ -63,15 +63,10 @@ def get_config(directory=None):
     while directory:
         if CONFIG_FILE in os.listdir(directory):
             with open(os.path.join(directory, CONFIG_FILE)) as fh:
-                config = list(yaml.safe_load_all(fh))
+                config = dict(yaml.safe_load(fh))
                 break
 
         directory = os.path.split(directory)[0]
-
-    if config:
-        if len(config) > 1:
-            raise ValueError('The config file can only contain a single entry!')
-        config = config[0]
 
     return config
 
