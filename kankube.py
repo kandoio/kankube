@@ -175,6 +175,12 @@ def status(entries=None):
             "updatedReplicas": 2
         }
 
+        status:
+            observedGeneration: 2
+            replicas: 1
+            unavailableReplicas: 1
+            updatedReplicas: 1
+
     :return:
     """
     exit_code = 0
@@ -187,10 +193,10 @@ def status(entries=None):
                 exit_code = 1
                 logger.error('{} did not have a status'.format(_get_log_name(entry)))
 
-            total = entry_status['replicas']
-            available = entry_status['availableReplicas']
+            total = entry_status.get('replicas', 0)
+            available = entry_status.get('availableReplicas', 0)
             unavailable = entry_status.get('unavailableReplicas', 0)
-            updated = entry_status['updatedReplicas']
+            updated = entry_status.get('updatedReplicas', 0)
             observed_generation = entry_status['observedGeneration']
             latest_generation = entry.obj.get('metadata', {}).get('generation')
 
