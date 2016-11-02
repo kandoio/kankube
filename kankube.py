@@ -1,57 +1,118 @@
 import argparse
 import copy
-import json
 import logging
 import os
+import subprocess
 import sys
+import tempfile
 
-import pykube
 import yaml
 
 NAMESPACE_FILE = '.namespace'
 CONFIG_FILE = 'kankube.yml'
 
-OBJECTS = {
-    'ConfigMap': pykube.ConfigMap,
-    'Deployment': pykube.Deployment,
-    'Ingress': pykube.Ingress,
-    'Pod': pykube.Pod,
-    'Secret': pykube.Secret,
-    'Service': pykube.Service
-}
 
-BASIC_CONFIG = {
-    "clusters": [
-        {
-            "name": "self",
-            "cluster": {
-                "server": None,
-            },
-        },
-    ],
-    "users": [
-        {
-            "name": "self",
-            "user": {},
-        },
-    ],
-    "contexts": [
-        {
-            "name": "self",
-            "context": {
-                "cluster": "self",
-                "user": "self",
-            },
-        }
-    ],
-    "current-context": "self",
-}
+class Kind(object):
+    kind = None
+
+    def __init__(self, obj, namespace=None):
+        self.local_obj = copy.deepcopy(obj)
+        self.remote_obj = None
+        self.namespace = namespace
+
+    @property
+    def name(self):
+        return self.local_obj['metadata']['name']
+
+    def get(self, check=None):
+        self.remote_obj = call_kubectl(self, 'get', check=check)
+        return self.remote_obj
+
+    def apply(self, check=None):
+        self.remote_obj = call_kubectl(self, 'apply', check=check)
+        return self.remote_obj
+
+    def delete(self, check=None):
+        self.remote_obj = call_kubectl(self, 'delete', check=check)
+        return self.remote_obj
+
+    @classmethod
+    def get_class(cls, kind):
+        for klass in [
+            ConfigMap,
+            Deployment,
+            Ingress,
+            Pod,
+            Secret,
+            Service
+        ]:
+            if klass.kind == kind:
+                return klass
+
+
+class ConfigMap(Kind):
+    kind = 'ConfigMap'
+
+
+class Deployment(Kind):
+    kind = 'Deployment'
+
+
+class Ingress(Kind):
+    kind = 'Ingress'
+
+
+class Pod(Kind):
+    kind = 'Pod'
+
+
+class Secret(Kind):
+    kind = 'Secret'
+
+
+class Service(Kind):
+    kind = 'Service'
+
 
 logger = logging.getLogger('kankube')
 
 
 def _get_log_name(entry):
     return '{} ({}) in {}'.format(entry.name, entry.kind, entry.namespace)
+
+
+def call_kubectl(obj, action, check=None):
+    if check is None:
+        check = True
+
+    cmd = ['kubectl']
+    if obj.namespace:
+        cmd.extend(['--namespace', obj.namespace])
+
+    file = None
+    if action == 'apply':
+        file = tempfile.NamedTemporaryFile('w')
+        yaml.safe_dump(obj.local_obj, file)
+        cmd.extend(['apply', '-f', file.name])
+
+    elif action == 'delete':
+        cmd.extend(['delete', obj.kind.lower(), obj.name])
+    elif action == 'get':
+        cmd.extend(['get', obj.kind.lower(), obj.name])
+        cmd.extend(['-o', 'yaml'])
+
+    logger.debug(cmd)
+
+    try:
+        if check:
+            result = subprocess.check_output(cmd)
+        else:
+            result = subprocess.getoutput(cmd)
+    finally:
+        if file:
+            file.close()
+
+    return yaml.safe_load(result)
 
 
 def get_config(directory=None):
@@ -93,7 +154,7 @@ def get_namespace(directory=None):
     return namespace
 
 
-def get_entries(filename, namespace, api, config=None):
+def get_entries(filename, namespace, config=None):
     if os.path.isfile(filename):
         file_path = os.path.abspath(filename)
     else:
@@ -126,41 +187,29 @@ def get_entries(filename, namespace, api, config=None):
     entries = []
     for entry in raw_entries:
         kind = entry['kind']
-        klass = OBJECTS[kind]
+        klass = Kind.get_class(kind)
 
-        entries.append(klass(api, entry, namespace=namespace))
+        entries.append(klass(entry, namespace=namespace))
 
     return entries
 
 
 def get(entries=None):
     for entry in entries:
-        entry.reload()
-        # json.dumps is the best way to pretty print a dict, pprint is rubbish.
-        logger.info('{}\n{}'.format(_get_log_name(entry), json.dumps(entry.obj, indent=4)))
-
-
-def create(entries=None):
-    for entry in entries:
-        if not entry.exists():
-            logger.info('Creating {}'.format(_get_log_name(entry)))
-            entry.create()
+        obj = entry.get()
+        logger.info('{}\n{}'.format(_get_log_name(entry), yaml.safe_dump(obj)))
 
 
 def apply(entries=None):
     for entry in entries:
-        if entry.exists():
-            logger.info('Applying {}'.format(_get_log_name(entry)))
-            entry.update()
-        else:
-            create(entries=[entry])
+        logger.info('Applying {}'.format(_get_log_name(entry)))
+        entry.apply()
 
 
 def delete(entries=None):
     for entry in entries:
-        if entry.exists():
-            logger.info('Deleting {}'.format(_get_log_name(entry)))
-            entry.delete()
+        logger.info('Deleting {}'.format(_get_log_name(entry)))
+        entry.delete()
 
 
 def status(entries=None):
@@ -186,9 +235,9 @@ def status(entries=None):
     exit_code = 0
 
     for entry in entries:
-        entry.reload()
+        entry.get()
         if entry.kind.lower() == 'deployment':
-            entry_status = entry.obj.get('status')
+            entry_status = entry.remote_obj.get('status')
             if not entry_status:
                 exit_code = 1
                 logger.error('{} did not have a status'.format(_get_log_name(entry)))
@@ -198,7 +247,7 @@ def status(entries=None):
             unavailable = entry_status.get('unavailableReplicas', 0)
             updated = entry_status.get('updatedReplicas', 0)
             observed_generation = entry_status['observedGeneration']
-            latest_generation = entry.obj.get('metadata', {}).get('generation')
+            latest_generation = entry.remote_obj.get('metadata', {}).get('generation')
 
             logger.info('{}: {} total, {} available, {} unavailable, {} updated at generation {} ({})'.format(
                 _get_log_name(entry), total, available, unavailable, updated, observed_generation,
@@ -230,21 +279,11 @@ def main():
     subparsers = parser.add_subparsers(dest='subparser_name')
 
     parser.add_argument('--namespace')
-
-    parser.add_argument('--host', default=os.environ.get('KUBERNETES_HOST'))
-    parser.add_argument('--token', default=os.environ.get('KUBERNETES_TOKEN'))
-    parser.add_argument('--username', default=os.environ.get('KUBERNETES_USERNAME'))
-    parser.add_argument('--password', default=os.environ.get('KUBERNETES_PASSWORD'))
-
     parser.add_argument('--kind', action='append')
 
     get_parser = subparsers.add_parser('get')
     get_parser.add_argument('filenames', nargs='+')
     get_parser.set_defaults(func=get)
-
-    create_parser = subparsers.add_parser('create')
-    create_parser.add_argument('filenames', nargs='+')
-    create_parser.set_defaults(func=create)
 
     apply_parser = subparsers.add_parser('apply')
     apply_parser.add_argument('filenames', nargs='+')
@@ -263,28 +302,10 @@ def main():
         parser.print_help()
         parser.exit(1)
 
-    # Figure out how to talk to kubenetes
-    pykube_config = None
-    if args.host or args.username or args.password or args.token:
-        obj = copy.deepcopy(BASIC_CONFIG)
-        obj['clusters'][0]['cluster']['server'] = args.host
-        obj['users'][0]['user'] = {
-            'username': args.username,
-            'password': args.password,
-            'token': args.token
-        }
-        pykube_config = pykube.KubeConfig(obj)
-    elif os.path.isfile(os.path.expanduser("~/.kube/config")):
-        pykube_config = pykube.KubeConfig.from_file(os.path.expanduser("~/.kube/config"))
-    else:
-        parser.error('You must provide a host, username/password, token, or have a ~/.kube/config file')
-
-    api = pykube.HTTPClient(pykube_config)
-
     # Get the entries which should be used
     entries = []
     for filename in args.filenames:
-        entries.extend(get_entries(filename, args.namespace, api))
+        entries.extend(get_entries(filename, args.namespace))
 
     # Apply any filters
     if args.kind:
