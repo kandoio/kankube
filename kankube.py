@@ -42,12 +42,15 @@ class Kind(object):
             ConfigMap,
             Deployment,
             Ingress,
+            Namespace,
             Pod,
             Secret,
             Service
         ]:
             if klass.kind == kind:
                 return klass
+
+        raise ValueError('Unknown kind "{}"'.format(kind))
 
 
 class ConfigMap(Kind):
@@ -60,6 +63,10 @@ class Deployment(Kind):
 
 class Ingress(Kind):
     kind = 'Ingress'
+
+
+class Namespace(Kind):
+    kind = 'Namespace'
 
 
 class Pod(Kind):
