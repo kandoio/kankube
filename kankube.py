@@ -15,14 +15,18 @@ CONFIG_FILE = 'kankube.yml'
 class Kind(object):
     kind = None
 
-    def __init__(self, obj, namespace=None):
+    def __init__(self, obj, default_namespace=None):
         self.local_obj = copy.deepcopy(obj)
         self.remote_obj = None
-        self.namespace = namespace
+        self.default_namespace = default_namespace
 
     @property
     def name(self):
         return self.local_obj['metadata']['name']
+
+    @property
+    def namespace(self):
+        return self.local_obj['metadata'].get('namespace') or self.default_namespace
 
     def get(self, check=None):
         self.remote_obj = call_kubectl(self, 'get', check=check)
@@ -196,7 +200,7 @@ def get_entries(filename, namespace, config=None):
         kind = entry['kind']
         klass = Kind.get_class(kind)
 
-        entries.append(klass(entry, namespace=namespace))
+        entries.append(klass(entry, default_namespace=namespace))
 
     return entries
 
