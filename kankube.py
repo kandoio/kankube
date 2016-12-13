@@ -132,7 +132,7 @@ def get_config(directory=None):
 
     config = None
 
-    while directory:
+    while directory and directory != '/':
         if CONFIG_FILE in os.listdir(directory):
             with open(os.path.join(directory, CONFIG_FILE)) as fh:
                 config = dict(yaml.safe_load(fh))
@@ -154,7 +154,7 @@ def get_namespace(directory=None):
 
     namespace = 'default'
 
-    while directory:
+    while directory and directory != '/':
         if NAMESPACE_FILE in os.listdir(directory):
             with open(os.path.join(directory, NAMESPACE_FILE)) as fh:
                 namespace = fh.read().strip()
@@ -203,6 +203,22 @@ def get_entries(filename, namespace, config=None):
         entries.append(klass(entry, default_namespace=namespace))
 
     return entries
+
+
+def config(namespace, args):
+    if not namespace:
+        namespace = get_namespace()
+
+    _config = get_config()
+    if not _config:
+        raise ValueError('Unable to find config file')
+
+    namespace_config = get_substitutions(_config, namespace)
+    if not namespace_config:
+        raise ValueError('Namespace {} has no config values'.format(namespace))
+
+    if args.get:
+        print(namespace_config.get(args.get), file=sys.stdout)
 
 
 def get(entries=None):
@@ -292,6 +308,10 @@ def main():
     parser.add_argument('--namespace')
     parser.add_argument('--kind', action='append')
 
+    get_parser = subparsers.add_parser('config')
+    get_parser.add_argument('--get')
+    get_parser.set_defaults(func=config)
+
     get_parser = subparsers.add_parser('get')
     get_parser.add_argument('filenames', nargs='+')
     get_parser.set_defaults(func=get)
@@ -313,17 +333,20 @@ def main():
         parser.print_help()
         parser.exit(1)
 
-    # Get the entries which should be used
-    entries = []
-    for filename in args.filenames:
-        entries.extend(get_entries(filename, args.namespace))
+    if args.func == config:
+        exit_code = args.func(args.namespace, args)
+    else:
+        # Get the entries which should be used
+        entries = []
+        for filename in args.filenames:
+            entries.extend(get_entries(filename, args.namespace))
 
-    # Apply any filters
-    if args.kind:
-        entries = [entry for entry in entries if entry.kind.lower() in args.kind]
+        # Apply any filters
+        if args.kind:
+            entries = [entry for entry in entries if entry.kind.lower() in args.kind]
 
-    # Call the actual function
-    exit_code = args.func(entries)
+        # Call the actual function
+        exit_code = args.func(entries)
 
     # Exit nicely
     sys.exit(exit_code)
