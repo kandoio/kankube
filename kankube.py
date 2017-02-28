@@ -170,7 +170,7 @@ def call_kubectl(obj, action, check=None, extras=None):
 
     try:
         try:
-            result = subprocess.check_output(cmd)
+            result = subprocess.check_output(cmd, stderr=subprocess.STDOUT)
         except subprocess.CalledProcessError as error:
             if check:
                 if error.output:
@@ -382,11 +382,22 @@ def status(entries=None):
             else:
                 exit_code = 1
         elif entry.kind.lower() == 'pod':
-            phase = entry.remote_obj.get('status', {}).get('phase')
-            logger.info('{}: phase {}'.format(
-                _get_log_name(entry), phase
-            ))
-            exit_code = int(not (phase and phase == 'Running'))
+            pod_status = entry.remote_obj.get('status', {})
+            pod_metadata = entry.remote_obj.get('metadata', {})
+
+            phase = pod_status.get('phase')
+            msg = '{}: phase {}'.format(_get_log_name(entry), phase)
+
+            deleted_at = pod_metadata.get('deletionTimestamp')
+            if deleted_at:
+                msg += ', deleted at {}'.format(str(deleted_at))
+
+            logger.info(msg)
+
+            if not phase or phase != 'Running':
+                exit_code = 1
+            elif deleted_at:
+                exit_code = 1
         else:
             exit_code = 1
             logger.warning('Unable to get status for {}'.format(_get_log_name(entry)))
