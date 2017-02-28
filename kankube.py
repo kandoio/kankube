@@ -28,9 +28,29 @@ class Kind(object):
     def namespace(self):
         return self.local_obj['metadata'].get('namespace') or self.default_namespace
 
+    @property
+    def spec(self):
+        return self.local_obj.get('spec')
+
+    @property
+    def inner_spec(self):
+        spec = self.local_obj.get('spec', {})
+
+        if spec.get('template', {}).get('spec'):
+            spec = spec['template']['spec']
+
+        return spec or None
+
+    @property
+    def labels(self):
+        return None
+
     def get(self, check=None):
         self.remote_obj = call_kubectl(self, 'get', check=check)
         return self.remote_obj
+
+    def get_pods(self):
+        return None
 
     def apply(self, check=None):
         self.remote_obj = call_kubectl(self, 'apply', check=check)
@@ -64,6 +84,13 @@ class ConfigMap(Kind):
 class Deployment(Kind):
     kind = 'Deployment'
 
+    @property
+    def labels(self):
+        return self.spec and self.spec.get('template', {}).get('metadata', {}).get('labels')
+
+    def get_pods(self):
+        return get_pods(self, selectors=self.labels) if self.labels else None
+
 
 class Ingress(Kind):
     kind = 'Ingress'
@@ -72,9 +99,15 @@ class Ingress(Kind):
 class Namespace(Kind):
     kind = 'Namespace'
 
+    def get_pods(self):
+        return get_pods(self)
+
 
 class Pod(Kind):
     kind = 'Pod'
+
+    def get_pods(self):
+        return [self]
 
 
 class Secret(Kind):
@@ -84,6 +117,11 @@ class Secret(Kind):
 class Service(Kind):
     kind = 'Service'
 
+    def get_pods(self):
+        selectors = self.local_obj.get('spec', {}).get('selector')
+        if selectors:
+            return get_pods(self, selectors=selectors)
+
 
 logger = logging.getLogger('kankube')
 
@@ -92,7 +130,18 @@ def _get_log_name(entry):
     return '{} ({}) in {}'.format(entry.name, entry.kind, entry.namespace)
 
 
-def call_kubectl(obj, action, check=None):
+def get_pods(obj, selectors=None):
+    extras = ['get', 'pods', '-o', 'yaml']
+    if selectors:
+        selectors = ','.join(['{}={}'.format(key, value) for key, value in selectors.items()])
+        extras.extend(['--selector', selectors])
+
+    result = call_kubectl(obj, None, extras=extras)
+    if result and result.get('items'):
+        return [Pod(item, default_namespace=obj.namespace) for item in result['items']]
+
+
+def call_kubectl(obj, action, check=None, extras=None):
     if check is None:
         check = True
 
@@ -111,19 +160,33 @@ def call_kubectl(obj, action, check=None):
     elif action == 'get':
         cmd.extend(['get', obj.kind.lower(), obj.name])
         cmd.extend(['-o', 'yaml'])
+    elif action == 'exec':
+        cmd.extend(['exec', obj.name])
+
+    if extras:
+        cmd.extend(extras)
 
     logger.debug(cmd)
 
     try:
-        if check:
+        try:
             result = subprocess.check_output(cmd)
-        else:
-            result = subprocess.getoutput(cmd)
+        except subprocess.CalledProcessError as error:
+            if check:
+                if error.output:
+                    error.output = error.output.decode('utf-8')
+
+                raise
+            else:
+                result = error.output
     finally:
         if file:
             file.close()
 
-    return yaml.safe_load(result)
+    if '-o' and 'yaml' in cmd:
+        return yaml.safe_load(result)
+    else:
+        return result.decode('utf-8')
 
 
 def get_config(directory=None):
@@ -239,6 +302,35 @@ def delete(entries=None):
         entry.delete()
 
 
+def execute(entries, args):
+    """ Assumes the labels uniquely identify the pods """
+    cmd = args.cmd
+    extras = ['--'] + cmd.split(' ')
+
+    for entry in entries:
+        pods = entry.get_pods()
+        if not pods:
+            logger.warning('Unable to find any pods for %s', _get_log_name(entry))
+            continue
+
+        for pod in pods:
+            exit_code = status([pod])
+            if exit_code != 0:
+                logger.warning('ignoring %s since it it not available', _get_log_name(pod))
+                continue
+
+            failed = False
+            try:
+                output = call_kubectl(pod, 'exec', extras=extras)
+            except subprocess.CalledProcessError as error:
+                failed = error
+                output = error.output
+
+            logger.info('exec result for %s: %s', _get_log_name(pod), output)
+            if failed:
+                raise failed
+
+
 def status(entries=None):
     """ Check the status of entries
 
@@ -289,6 +381,12 @@ def status(entries=None):
                 pass
             else:
                 exit_code = 1
+        elif entry.kind.lower() == 'pod':
+            phase = entry.remote_obj.get('status', {}).get('phase')
+            logger.info('{}: phase {}'.format(
+                _get_log_name(entry), phase
+            ))
+            exit_code = int(not (phase and phase == 'Running'))
         else:
             exit_code = 1
             logger.warning('Unable to get status for {}'.format(_get_log_name(entry)))
@@ -328,6 +426,11 @@ def main():
     delete_parser.add_argument('filenames', nargs='+')
     delete_parser.set_defaults(func=status)
 
+    delete_parser = subparsers.add_parser('exec')
+    delete_parser.add_argument('filenames', nargs='+')
+    delete_parser.add_argument('--cmd', required=True)
+    delete_parser.set_defaults(func=execute)
+
     args = parser.parse_args()
     if not args.func:
         parser.print_help()
@@ -346,7 +449,10 @@ def main():
             entries = [entry for entry in entries if entry.kind.lower() in args.kind]
 
         # Call the actual function
-        exit_code = args.func(entries)
+        if args.func in [execute]:
+            exit_code = args.func(entries, args)
+        else:
+            exit_code = args.func(entries)
 
     # Exit nicely
     sys.exit(exit_code)
