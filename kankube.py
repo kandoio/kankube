@@ -141,7 +141,7 @@ def get_pods(obj, selectors=None):
         return [Pod(item, default_namespace=obj.namespace) for item in result['items']]
 
 
-def call_kubectl(obj, action, check=None, extras=None):
+def call_kubectl(obj, action, check=None, extras=None, mute=False):
     if check is None:
         check = True
 
@@ -172,6 +172,9 @@ def call_kubectl(obj, action, check=None, extras=None):
         try:
             result = subprocess.check_output(cmd, stderr=subprocess.STDOUT)
         except subprocess.CalledProcessError as error:
+            if not mute:
+                logger.exception('output: %s', error.output if error.output else None)
+
             if check:
                 if error.output:
                     error.output = error.output.decode('utf-8')
@@ -321,7 +324,7 @@ def execute(entries, args):
 
             failed = False
             try:
-                output = call_kubectl(pod, 'exec', extras=extras)
+                output = call_kubectl(pod, 'exec', mute=True, extras=extras)
             except subprocess.CalledProcessError as error:
                 failed = error
                 output = error.output
