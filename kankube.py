@@ -378,7 +378,7 @@ def status(entries=None):
 
             if observed_generation == latest_generation and \
                     total == available and \
-                    total == updated and \
+                    (updated == 0 or total == updated) and \
                     unavailable == 0:
                 # All is well in the world
                 pass
