@@ -13,6 +13,7 @@ CONFIG_FILE = 'kankube.yml'
 
 
 class Kind(object):
+    sub_classes = None
     kind = None
 
     def __init__(self, obj, default_namespace=None):
@@ -62,19 +63,29 @@ class Kind(object):
 
     @classmethod
     def get_class(cls, kind):
-        for klass in [
-            ConfigMap,
-            Deployment,
-            Ingress,
-            Namespace,
-            Pod,
-            Secret,
-            Service
-        ]:
+        if cls.sub_classes is None:
+            cls.sub_classes = [
+                ConfigMap,
+                Deployment,
+                Ingress,
+                Namespace,
+                Pod,
+                Secret,
+                Service
+            ]
+
+        for klass in cls.sub_classes:
             if klass.kind == kind:
                 return klass
 
-        raise ValueError('Unknown kind "{}"'.format(kind))
+        new_class = type(kind, (cls,), {})
+        new_class.kind = kind
+
+        cls.sub_classes.append(
+            new_class
+        )
+
+        return new_class
 
 
 class ConfigMap(Kind):
@@ -94,6 +105,10 @@ class Deployment(Kind):
 
 class Ingress(Kind):
     kind = 'Ingress'
+
+
+class Job(Kind):
+    kind = 'Job'
 
 
 class Namespace(Kind):
@@ -357,7 +372,12 @@ def status(entries=None):
     exit_code = 0
 
     for entry in entries:
-        entry.get()
+        try:
+            entry.get()
+        except subprocess.SubprocessError:
+            exit_code = 2
+            continue
+
         if entry.kind.lower() == 'deployment':
             entry_status = entry.remote_obj.get('status')
             if not entry_status:
@@ -384,6 +404,13 @@ def status(entries=None):
                 pass
             else:
                 exit_code = 1
+        elif entry.kind.lower() == 'job':
+            job_status = entry.remote_obj.get('status', {})
+            logger.info('{}: startTime: {}, completionTime: {}'.format(
+                _get_log_name(entry), job_status.get('startTime'), job_status.get('completionTime')
+            ))
+            exit_code = not job_status.get('completionTime')
+
         elif entry.kind.lower() == 'pod':
             pod_status = entry.remote_obj.get('status', {})
             pod_metadata = entry.remote_obj.get('metadata', {})
