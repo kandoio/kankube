@@ -404,6 +404,23 @@ def status(entries=None):
                 pass
             else:
                 exit_code = 1
+        elif entry.kind.lower() == 'daemonset':
+            job_status = entry.remote_obj.get('status', {})
+            desired_number_scheduled = job_status.get('desiredNumberScheduled', 0)
+            current_number_scheduled = job_status.get('currentNumberScheduled', 0)
+            updated_number_scheduled = job_status.get('updatedNumberScheduled', 0)
+            number_ready = job_status.get('numberReady', 0)
+            number_available = job_status.get('numberAvailable', 0)
+
+            if (
+                (number_ready < 1) or
+                (number_ready != number_available) or
+                (current_number_scheduled != desired_number_scheduled) or
+                (number_ready != current_number_scheduled) or
+                (number_ready != updated_number_scheduled)
+            ):
+                exit_code = 1
+
         elif entry.kind.lower() == 'job':
             job_status = entry.remote_obj.get('status', {})
             logger.info('{}: startTime: {}, completionTime: {}'.format(
