@@ -19,7 +19,7 @@ test_requirements = [
 
 setup(
     name='kankube',
-    version='0.5.0',
+    version='0.5.1',
     description="Basic kubectl wrapper",
     long_description=readme + '\n\n' + history,
     author="Kando Limited",
