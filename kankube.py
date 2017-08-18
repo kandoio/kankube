@@ -412,6 +412,13 @@ def status(entries=None):
             number_ready = job_status.get('numberReady', 0)
             number_available = job_status.get('numberAvailable', 0)
 
+            logger.info(
+                'desiredNumberScheduled: %s, currentNumberScheduled: %s, ' +
+                'updatedNumberScheduled: %s, numberReady: %s, numberAvailable: %s',
+                desired_number_scheduled, current_number_scheduled, updated_number_scheduled,
+                number_ready, number_available
+            )
+
             if (
                 (number_ready < 1) or
                 (number_ready != number_available) or
