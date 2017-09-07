@@ -3,25 +3,24 @@
 
 from setuptools import setup
 
-with open('README.rst') as readme_file:
+with open('README.md') as readme_file:
     readme = readme_file.read()
 
-with open('HISTORY.rst') as history_file:
-    history = history_file.read()
+with open('CHANGES.md') as changes_file:
+    changes = changes_file.read()
 
 requirements = [
     'pyyaml'
 ]
 
 test_requirements = [
-    # TODO: put package test requirements here
 ]
 
 setup(
     name='kankube',
     version='0.5.2',
     description="Basic kubectl wrapper",
-    long_description=readme + '\n\n' + history,
+    long_description=readme + '\n\n' + changes,
     author="Kando Limited",
     author_email='admin@kando.io',
     url='https://github.com/kandoio/kankube',
